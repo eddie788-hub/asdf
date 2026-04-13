@@ -1,0 +1,923 @@
+import React, { useState, useEffect, useCallback, useRef } from 'react';
+import { 
+  Shield, Activity, Lock, Search, AlertTriangle, 
+  Wifi, Server, Database, Fingerprint, Zap, 
+  CreditCard, LogOut, User, CheckCircle, XCircle, Settings,
+  Globe, FileText, Clock, Hash, Link, Download, 
+  TrendingUp, Target, Eye, Upload, Filter, Calendar,
+  MapPin, GitBranch, Code, Terminal, Cpu, Network,
+  Radio, ScanEye, Bug, Skull, Ghost, AlertOctagon,
+  Brain, TrendingDown, Battery, Thermometer, Coffee,
+  Play, Pause, RotateCcw, BarChart, PieChart, 
+  FileSearch, Binary, ShieldCheck, Watch, EyeOff
+} from 'lucide-react';
+
+// ============================================
+// CONFIGURATION & CONSTANTS
+// ============================================
+
+const EVASION_CONFIG = {
+  REQUEST_INTERVAL: {
+    NORMAL: 3000,
+    AGGRESSIVE: 1000,
+    STEALTH: 8000
+  },
+  COOLDOWN: {
+    DURATION: 30 * 60 * 1000,
+    INTERVAL: 6 * 60 * 60 * 1000,
+  },
+  HUMAN_BEHAVIOR: {
+    CLICK_VARIANCE: 0.3,
+    SCROLL_PATTERNS: true,
+    RANDOM_PAUSES: true,
+    MOUSE_MOVEMENTS: true
+  },
+  ROTATION: {
+    USER_AGENTS: [
+      'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120.0.0.0',
+      'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 Safari/537.36',
+      'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Firefox/121.0',
+      'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15',
+      'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:109.0) Gecko/20100101 Firefox/121.0'
+    ],
+    ROTATE_EVERY: 50,
+    REQUEST_DELAY_JITTER: 0.2
+  },
+  EVASION: {
+    RESPECT_ROBOTS: false,
+    FAKE_REFERRERS: true,
+    SESSION_PERSISTENCE: true,
+    AJAX_LOADING: true,
+    BROWSER_CACHE: true,
+    JS_EXECUTION: true,
+    CAPTCHA_SOLVING: true,
+    RATE_LIMIT_BYPASS: true
+  }
+};
+
+const THREAT_SOURCES = [
+  { id: 1, name: "CVE Database", url: "https://cve.circl.lu/api/last", type: "vulnerability", active: true },
+  { id: 2, name: "AlienVault OTX", url: "https://otx.alienvault.com/api/v1/pulses/subscribed", type: "threat", active: true },
+  { id: 3, name: "URLhaus", url: "https://urlhaus.abuse.ch/downloads/csv/", type: "malware", active: true },
+  { id: 4, name: "ThreatFox", url: "https://threatfox.abuse.ch/downloads/", type: "ioc", active: true },
+  { id: 5, name: "DarkWeb Monitor", url: "api/darkweb/proxy", type: "intel", active: false },
+  { id: 6, name: "Ransomware Tracker", url: "https://ransomwaretracker.abuse.ch/downloads/", type: "ransomware", active: true }
+];
+
+// ============================================
+// ML BEHAVIORAL MODEL
+// ============================================
+
+class BehavioralMLModel {
+  constructor() {
+    this.requestHistory = [];
+    this.blockedPatterns = [];
+    this.successPatterns = [];
+    this.currentBehavior = 'normal';
+    this.currentDelay = EVASION_CONFIG.REQUEST_INTERVAL.NORMAL;
+    this.learningRate = 0.1;
+  }
+
+  learnSuccess(request) {
+    this.successPatterns.push({
+      timestamp: Date.now(),
+      headers: request.headers,
+      interval: request.interval,
+      url: request.url
+    });
+    if (this.successPatterns.length > 1000) this.successPatterns.shift();
+    this.adaptBehavior();
+  }
+
+  learnBlock(block) {
+    this.blockedPatterns.push({
+      timestamp: Date.now(),
+      reason: block.reason,
+      url: block.url,
+      statusCode: block.statusCode
+    });
+    if (this.blockedPatterns.length > 100) this.blockedPatterns.shift();
+    
+    if (this.blockedPatterns.filter(b => Date.now() - b.timestamp < 300000).length > 3) {
+      this.currentBehavior = 'stealth';
+      this.currentDelay = EVASION_CONFIG.REQUEST_INTERVAL.STEALTH;
+    }
+    this.adaptBehavior();
+  }
+
+  adaptBehavior() {
+    const avgSuccessInterval = this.successPatterns.reduce((sum, p) => sum + p.interval, 0) / (this.successPatterns.length || 1);
+    const recentBlocks = this.blockedPatterns.filter(b => Date.now() - b.timestamp < 300000).length;
+    
+    if (recentBlocks > 3) {
+      this.currentBehavior = 'stealth';
+      this.currentDelay = EVASION_CONFIG.REQUEST_INTERVAL.STEALTH;
+    } else if (avgSuccessInterval < 2000 && this.successPatterns.length > 20) {
+      this.currentBehavior = 'aggressive';
+      this.currentDelay = EVASION_CONFIG.REQUEST_INTERVAL.AGGRESSIVE;
+    } else {
+      this.currentBehavior = 'normal';
+      this.currentDelay = EVASION_CONFIG.REQUEST_INTERVAL.NORMAL;
+    }
+  }
+
+  getNextDelay() {
+    let delay = this.currentDelay;
+    if (EVASION_CONFIG.HUMAN_BEHAVIOR.RANDOM_PAUSES && Math.random() < 0.1) {
+      delay += Math.random() * 5000;
+    }
+    delay *= (1 + (Math.random() - 0.5) * EVASION_CONFIG.ROTATION.REQUEST_DELAY_JITTER);
+    return Math.max(500, Math.min(30000, delay));
+  }
+
+  predictSafety(url) {
+    const blockedDomain = this.blockedPatterns.some(b => url.includes(b.url?.split('/')[2] || ''));
+    if (blockedDomain) return 0.2;
+    return 0.7;
+  }
+
+  getStatus() {
+    return {
+      behavior: this.currentBehavior,
+      delay: Math.round(this.currentDelay),
+      learnedPatterns: this.successPatterns.length,
+      blocksAvoided: this.blockedPatterns.length
+    };
+  }
+}
+
+// ============================================
+// THROTTLING MANAGER
+// ============================================
+
+class ThrottlingManager {
+  constructor() {
+    this.requestCount = 0;
+    this.requestWindow = [];
+    this.cooldownActive = false;
+    this.cooldownEndTime = null;
+    this.lastCooldownTime = null;
+    this.domainRequestCount = new Map();
+    this.crawlStartTime = null;
+  }
+
+  startCrawl() {
+    this.crawlStartTime = Date.now();
+    localStorage.setItem('crawlStartTime', this.crawlStartTime.toString());
+  }
+
+  needsCooldown() {
+    const now = Date.now();
+    if (this.cooldownActive && this.cooldownEndTime > now) return true;
+    if (this.lastCooldownTime && (now - this.lastCooldownTime) < EVASION_CONFIG.COOLDOWN.INTERVAL) return false;
+    if (this.crawlStartTime && (now - this.crawlStartTime) >= EVASION_CONFIG.COOLDOWN.INTERVAL) {
+      this.startCooldown();
+      return true;
+    }
+    return false;
+  }
+
+  startCooldown() {
+    this.cooldownActive = true;
+    this.cooldownEndTime = Date.now() + EVASION_CONFIG.COOLDOWN.DURATION;
+    this.lastCooldownTime = Date.now();
+    localStorage.setItem('cooldownEndTime', this.cooldownEndTime.toString());
+    localStorage.setItem('lastCooldownTime', this.lastCooldownTime.toString());
+  }
+
+  endCooldown() {
+    this.cooldownActive = false;
+    this.cooldownEndTime = null;
+    this.requestCount = 0;
+    this.requestWindow = [];
+    localStorage.removeItem('cooldownEndTime');
+    this.startCrawl();
+  }
+
+  getCooldownRemaining() {
+    if (!this.cooldownActive || !this.cooldownEndTime) return 0;
+    return Math.max(0, this.cooldownEndTime - Date.now());
+  }
+
+  trackRequest(domain) {
+    const count = this.domainRequestCount.get(domain) || 0;
+    this.domainRequestCount.set(domain, count + 1);
+    this.requestCount++;
+    this.requestWindow.push(Date.now());
+    if (this.requestWindow.length > 100) this.requestWindow.shift();
+  }
+
+  getCurrentRate() {
+    const now = Date.now();
+    const lastMinute = this.requestWindow.filter(ts => now - ts < 60000);
+    return lastMinute.length;
+  }
+
+  getAdaptiveDelay() {
+    const rate = this.getCurrentRate();
+    if (rate > 30) return 5000;
+    if (rate > 20) return 3000;
+    if (rate > 10) return 2000;
+    return 1000;
+  }
+
+  getStatus() {
+    return {
+      cooldownActive: this.cooldownActive,
+      cooldownRemaining: this.getCooldownRemaining(),
+      requestRate: this.getCurrentRate(),
+      totalRequests: this.requestCount,
+      domainsTracked: this.domainRequestCount.size
+    };
+  }
+}
+
+// ============================================
+// ML POWERED CRAWLER
+// ============================================
+
+class MLPoweredCrawler {
+  constructor() {
+    this.mlModel = new BehavioralMLModel();
+    this.throttler = new ThrottlingManager();
+    this.sessionCookies = new Map();
+    this.currentUserAgent = EVASION_CONFIG.ROTATION.USER_AGENTS[0];
+    this.requestCount = 0;
+    this.isRunning = false;
+    this.onFinding = null;
+  }
+
+  setCallbacks(onFinding, onStatusUpdate) {
+    this.onFinding = onFinding;
+    this.onStatusUpdate = onStatusUpdate;
+  }
+
+  rotateUserAgent() {
+    if (this.requestCount % EVASION_CONFIG.ROTATION.ROTATE_EVERY === 0) {
+      const randomIndex = Math.floor(Math.random() * EVASION_CONFIG.ROTATION.USER_AGENTS.length);
+      this.currentUserAgent = EVASION_CONFIG.ROTATION.USER_AGENTS[randomIndex];
+    }
+  }
+
+  generateHeaders(url) {
+    this.rotateUserAgent();
+    const headers = {
+      'User-Agent': this.currentUserAgent,
+      'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+      'Accept-Language': 'en-US,en;q=0.5',
+      'Accept-Encoding': 'gzip, deflate, br',
+      'Connection': 'keep-alive',
+      'Upgrade-Insecure-Requests': '1'
+    };
+    
+    if (EVASION_CONFIG.EVASION.FAKE_REFERRERS) {
+      const referrers = ['https://www.google.com/', 'https://www.bing.com/', 'https://duckduckgo.com/'];
+      headers['Referer'] = referrers[Math.floor(Math.random() * referrers.length)];
+    }
+    
+    const domain = new URL(url).hostname;
+    if (this.sessionCookies.has(domain)) {
+      headers['Cookie'] = this.sessionCookies.get(domain);
+    }
+    
+    return headers;
+  }
+
+  async intelligentCrawl(url, depth) {
+    if (this.throttler.needsCooldown()) {
+      throw new Error('Cooldown active');
+    }
+    
+    const safetyScore = this.mlModel.predictSafety(url);
+    if (safetyScore < 0.3) return null;
+    
+    const domain = new URL(url).hostname;
+    this.throttler.trackRequest(domain);
+    
+    const adaptiveDelay = this.throttler.getAdaptiveDelay();
+    const mlDelay = this.mlModel.getNextDelay();
+    const delay = Math.max(adaptiveDelay, mlDelay);
+    
+    await this.humanLikeDelay(delay);
+    const headers = this.generateHeaders(url);
+    
+    try {
+      const response = await this.makeRequest(url, headers);
+      this.mlModel.learnSuccess({ url, headers, interval: delay, timestamp: Date.now() });
+      this.requestCount++;
+      return response;
+    } catch (error) {
+      this.mlModel.learnBlock({ url, reason: error.message, statusCode: error.statusCode || 500, timestamp: Date.now() });
+      throw error;
+    }
+  }
+
+  async makeRequest(url, headers) {
+    await new Promise(resolve => setTimeout(resolve, 300 + Math.random() * 400));
+    const rand = Math.random();
+    if (rand < 0.02) throw { message: 'Rate limited', statusCode: 429 };
+    if (rand < 0.01) throw { message: 'Access denied', statusCode: 403 };
+    
+    return {
+      status: 200,
+      headers,
+      content: this.generateMockContent(url),
+      cookies: `session=${Math.random().toString(36).substring(7)}`
+    };
+  }
+
+  generateMockContent(url) {
+    const iocs = [
+      { type: 'ip_address', value: `185.${Math.floor(Math.random() * 255)}.${Math.floor(Math.random() * 255)}.${Math.floor(Math.random() * 255)}` },
+      { type: 'domain', value: `malicious-${Math.random().toString(36).substring(7)}.com` },
+      { type: 'hash', value: Math.random().toString(36).substring(2, 15) },
+      { type: 'cve', value: `CVE-2024-${Math.floor(Math.random() * 10000)}` },
+      { type: 'url', value: `http://evil-${Math.random().toString(36).substring(7)}.ru/payload` }
+    ];
+    return JSON.stringify({ url, iocs: iocs.slice(0, 3), timestamp: Date.now() });
+  }
+
+  async humanLikeDelay(baseDelay) {
+    let delay = baseDelay * (1 + (Math.random() - 0.5) * 0.4);
+    if (Math.random() < 0.1) {
+      delay += Math.random() * 5000;
+      this.onStatusUpdate?.('📖 Simulating human reading pause...');
+    }
+    await new Promise(resolve => setTimeout(resolve, delay));
+    return delay;
+  }
+
+  async startCrawling(seedUrls) {
+    this.isRunning = true;
+    this.throttler.startCrawl();
+    const queue = [...seedUrls];
+    const visited = new Set();
+    const findings = [];
+
+    while (this.isRunning && queue.length > 0) {
+      if (this.throttler.needsCooldown()) {
+        this.onStatusUpdate?.(`😴 Cooldown: ${Math.ceil(this.throttler.getCooldownRemaining() / 60000)} minutes remaining`);
+        await new Promise(resolve => setTimeout(resolve, 5000));
+        continue;
+      }
+
+      const url = queue.shift();
+      if (visited.has(url)) continue;
+      visited.add(url);
+
+      this.onStatusUpdate?.(`🕷️ Crawling: ${url} (Depth: ${visited.size})`);
+      
+      try {
+        const response = await this.intelligentCrawl(url, visited.size);
+        if (response) {
+          const extracted = this.extractFindings(response, url);
+          findings.push(...extracted);
+          this.onFinding?.(extracted);
+          
+          const newUrls = this.extractUrls(response.content);
+          newUrls.forEach(u => { if (!visited.has(u) && queue.length < 500) queue.push(u); });
+        }
+      } catch (error) {
+        this.onStatusUpdate?.(`⚠️ Failed: ${url} - ${error.message}`);
+        if (error.statusCode === 429) await new Promise(resolve => setTimeout(resolve, 30000));
+      }
+    }
+    
+    return findings;
+  }
+
+  extractFindings(response, sourceUrl) {
+    try {
+      const data = JSON.parse(response.content);
+      return data.iocs.map(ioc => ({
+        id: `${Date.now()}-${Math.random()}`,
+        ...ioc,
+        source: sourceUrl,
+        timestamp: new Date().toISOString(),
+        confidence: Math.random() * 100,
+        verified: false
+      }));
+    } catch {
+      return [];
+    }
+  }
+
+  extractUrls(content) {
+    const urls = [];
+    const urlRegex = /https?:\/\/[^\s<>"{}|\\^`[\]]+/g;
+    const matches = content.match(urlRegex);
+    if (matches) urls.push(...matches);
+    for (let i = 0; i < Math.min(3, Math.floor(Math.random() * 5)); i++) {
+      urls.push(`https://related-${Math.random().toString(36).substring(7)}.com/page`);
+    }
+    return [...new Set(urls)];
+  }
+
+  stop() {
+    this.isRunning = false;
+  }
+
+  getStatus() {
+    return {
+      ml: this.mlModel.getStatus(),
+      throttle: this.throttler.getStatus(),
+      running: this.isRunning,
+      requestsMade: this.requestCount,
+      userAgent: this.currentUserAgent.substring(0, 50) + '...'
+    };
+  }
+}
+
+// ============================================
+// MAIN APP COMPONENT
+// ============================================
+
+export default function App() {
+  const [isAuthenticated, setIsAuthenticated] = useState(false);
+  const [currentView, setCurrentView] = useState('crawler');
+  const [crawler] = useState(() => new MLPoweredCrawler());
+  const [crawlState, setCrawlState] = useState({
+    isRunning: false,
+    currentStatus: 'Idle',
+    pagesCrawled: 0,
+    findings: [],
+    crawlerStatus: null,
+    cooldownRemaining: 0
+  });
+  const [investigations, setInvestigations] = useState([]);
+  const [activeInvestigation, setActiveInvestigation] = useState(null);
+  const [seedUrls, setSeedUrls] = useState(['https://example.com']);
+  const [newUrl, setNewUrl] = useState('');
+
+  const crawlerRef = useRef(crawler);
+  const crawlPromiseRef = useRef(null);
+
+  useEffect(() => {
+    const interval = setInterval(() => {
+      if (crawlState.isRunning) {
+        const status = crawlerRef.current.getStatus();
+        setCrawlState(prev => ({
+          ...prev,
+          crawlerStatus: status,
+          cooldownRemaining: status.throttle.cooldownRemaining
+        }));
+      }
+    }, 1000);
+    return () => clearInterval(interval);
+  }, [crawlState.isRunning]);
+
+  const handleFinding = useCallback((findings) => {
+    setCrawlState(prev => ({
+      ...prev,
+      findings: [...findings, ...prev.findings].slice(0, 500),
+      pagesCrawled: prev.pagesCrawled + 1
+    }));
+    
+    if (activeInvestigation) {
+      setInvestigations(prev => prev.map(inv =>
+        inv.id === activeInvestigation.id
+          ? { ...inv, findings: [...inv.findings, ...findings] }
+          : inv
+      ));
+    }
+  }, [activeInvestigation]);
+
+  const handleStatusUpdate = useCallback((status) => {
+    setCrawlState(prev => ({ ...prev, currentStatus: status }));
+  }, []);
+
+  const startCrawler = useCallback(async () => {
+    if (crawlState.isRunning) return;
+    
+    crawlerRef.current.setCallbacks(handleFinding, handleStatusUpdate);
+    setCrawlState(prev => ({ ...prev, isRunning: true, findings: [], pagesCrawled: 0 }));
+    
+    crawlPromiseRef.current = crawlerRef.current.startCrawling(seedUrls);
+    const findings = await crawlPromiseRef.current;
+    
+    setCrawlState(prev => ({ ...prev, isRunning: false }));
+    
+    if (findings.length > 0 && !activeInvestigation) {
+      const newInvestigation = {
+        id: Date.now(),
+        caseId: `NXS-${new Date().getFullYear()}-${Math.floor(Math.random() * 10000)}`,
+        victim: { name: 'Automated Discovery', reportedAt: new Date().toISOString() },
+        startDate: new Date().toISOString(),
+        status: 'active',
+        findings: findings,
+        severity: 'critical'
+      };
+      setInvestigations(prev => [newInvestigation, ...prev]);
+      setActiveInvestigation(newInvestigation);
+    }
+  }, [crawlState.isRunning, seedUrls, handleFinding, handleStatusUpdate, activeInvestigation]);
+
+  const stopCrawler = useCallback(() => {
+    crawlerRef.current.stop();
+    setCrawlState(prev => ({ ...prev, isRunning: false }));
+  }, []);
+
+  const addSeedUrl = () => {
+    if (newUrl && !seedUrls.includes(newUrl)) {
+      setSeedUrls([...seedUrls, newUrl]);
+      setNewUrl('');
+    }
+  };
+
+  const removeSeedUrl = (url) => {
+    setSeedUrls(seedUrls.filter(u => u !== url));
+  };
+
+  const createInvestigation = () => {
+    const victim = prompt('Enter victim information:');
+    if (victim) {
+      const newInvestigation = {
+        id: Date.now(),
+        caseId: `NXS-${new Date().getFullYear()}-${Math.floor(Math.random() * 10000)}`,
+        victim: { name: victim, reportedAt: new Date().toISOString() },
+        startDate: new Date().toISOString(),
+        status: 'active',
+        findings: [],
+        severity: 'critical'
+      };
+      setInvestigations(prev => [newInvestigation, ...prev]);
+      setActiveInvestigation(newInvestigation);
+    }
+  };
+
+  if (!isAuthenticated) {
+    return (
+      <div className="min-h-screen bg-gradient-to-br from-slate-900 via-slate-800 to-slate-900 flex items-center justify-center p-4">
+        <div className="relative">
+          <div className="absolute inset-0 bg-blue-500 rounded-full blur-3xl opacity-20 animate-pulse"></div>
+          <div className="relative bg-slate-800/90 backdrop-blur-sm p-8 rounded-2xl shadow-2xl w-full max-w-md text-center border border-slate-700">
+            <div className="relative">
+              <Shield className="w-20 h-20 text-blue-500 mx-auto mb-4 animate-pulse" />
+              <div className="absolute inset-0 bg-blue-500 rounded-full blur-xl opacity-30 animate-ping"></div>
+            </div>
+            <h1 className="text-4xl font-bold text-white mb-2 bg-gradient-to-r from-blue-400 to-purple-400 bg-clip-text text-transparent">Nexus360 ML</h1>
+            <p className="text-slate-400 mb-8">Intelligent Evasion & Threat Intelligence Platform</p>
+            <div className="space-y-4">
+              <button onClick={() => setIsAuthenticated(true)} className="w-full bg-gradient-to-r from-blue-600 to-blue-700 hover:from-blue-700 hover:to-blue-800 text-white font-semibold py-3 px-4 rounded-lg transition-all transform hover:scale-105">
+                Enter Command Center
+              </button>
+            </div>
+            <div className="mt-6 flex items-center justify-center gap-2 text-xs text-slate-500">
+              <Brain size={14} /> ML-Powered • <Shield size={14} /> Undetectable • <Zap size={14} /> 360° Investigations
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="min-h-screen bg-gradient-to-br from-slate-900 via-slate-800 to-slate-900">
+      {/* Navigation */}
+      <nav className="bg-slate-800/80 backdrop-blur-sm border-b border-slate-700 sticky top-0 z-50">
+        <div className="px-6 py-3 flex items-center justify-between">
+          <div className="flex items-center gap-3">
+            <div className="relative">
+              <Shield className="text-blue-500" size={32} />
+              <div className="absolute -top-1 -right-1 w-3 h-3 bg-green-500 rounded-full animate-pulse"></div>
+            </div>
+            <div>
+              <h1 className="text-xl font-bold bg-gradient-to-r from-blue-400 to-purple-400 bg-clip-text text-transparent">Nexus360 ML Crawler</h1>
+              <p className="text-xs text-slate-400">Undetectable • Adaptive • Intelligent</p>
+            </div>
+          </div>
+          <div className="flex gap-2">
+            <button onClick={() => setCurrentView('crawler')} className={`px-4 py-2 rounded-lg transition-all flex items-center gap-2 ${currentView === 'crawler' ? 'bg-blue-600 shadow-lg shadow-blue-500/50' : 'hover:bg-slate-700'}`}>
+              <Globe size={18} /> Crawler
+            </button>
+            <button onClick={() => setCurrentView('investigations')} className={`px-4 py-2 rounded-lg transition-all flex items-center gap-2 ${currentView === 'investigations' ? 'bg-blue-600 shadow-lg shadow-blue-500/50' : 'hover:bg-slate-700'}`}>
+              <Target size={18} /> Investigations ({investigations.length})
+            </button>
+            <button onClick={() => setIsAuthenticated(false)} className="px-4 py-2 rounded-lg hover:bg-red-600 transition-all">
+              <LogOut size={18} />
+            </button>
+          </div>
+        </div>
+      </nav>
+
+      <div className="p-6">
+        {/* Crawler View */}
+        {currentView === 'crawler' && (
+          <div className="space-y-6">
+            {/* Header with Controls */}
+            <div className="flex flex-wrap justify-between items-center gap-4">
+              <div>
+                <h2 className="text-3xl font-bold text-white">ML-Powered Evasion Crawler</h2>
+                <p className="text-slate-400 mt-1">Polite crawling that never gets kicked out (wink wink)</p>
+              </div>
+              <div className="flex gap-3">
+                {!crawlState.isRunning ? (
+                  <button onClick={startCrawler} className="bg-gradient-to-r from-green-600 to-emerald-600 hover:from-green-700 hover:to-emerald-700 px-6 py-2 rounded-lg font-semibold flex items-center gap-2 transition-all transform hover:scale-105">
+                    <Play size={18} /> Start Crawl
+                  </button>
+                ) : (
+                  <button onClick={stopCrawler} className="bg-gradient-to-r from-red-600 to-orange-600 hover:from-red-700 hover:to-orange-700 px-6 py-2 rounded-lg font-semibold flex items-center gap-2 transition-all">
+                    <Pause size={18} /> Stop Crawl
+                  </button>
+                )}
+              </div>
+            </div>
+
+            {/* Seed URLs Management */}
+            <div className="bg-slate-800/50 backdrop-blur-sm rounded-xl border border-slate-700 p-4">
+              <h3 className="text-white font-semibold mb-3 flex items-center gap-2">
+                <Link size={18} className="text-blue-400" />
+                Seed URLs (Starting Points)
+              </h3>
+              <div className="flex flex-wrap gap-2 mb-3">
+                {seedUrls.map(url => (
+                  <span key={url} className="bg-slate-700 px-3 py-1 rounded-full text-sm flex items-center gap-2">
+                    <code className="text-blue-300">{url}</code>
+                    <button onClick={() => removeSeedUrl(url)} className="hover:text-red-400">×</button>
+                  </span>
+                ))}
+              </div>
+              <div className="flex gap-2">
+                <input
+                  type="text"
+                  value={newUrl}
+                  onChange={(e) => setNewUrl(e.target.value)}
+                  placeholder="Enter URL to crawl..."
+                  className="flex-1 bg-slate-900 border border-slate-700 rounded-lg px-4 py-2 text-white focus:outline-none focus:border-blue-500"
+                  onKeyPress={(e) => e.key === 'Enter' && addSeedUrl()}
+                />
+                <button onClick={addSeedUrl} className="bg-blue-600 hover:bg-blue-700 px-4 rounded-lg transition">Add</button>
+              </div>
+            </div>
+
+            {/* Status Dashboard */}
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+              <div className="bg-gradient-to-br from-slate-800 to-slate-800/50 p-4 rounded-xl border border-slate-700 backdrop-blur-sm">
+                <div className="flex items-center justify-between mb-2">
+                  <span className="text-slate-400">ML Behavior</span>
+                  <Brain size={20} className="text-purple-400" />
+                </div>
+                <p className="text-2xl font-bold text-white capitalize">{crawlState.crawlerStatus?.ml?.behavior || 'Idle'}</p>
+                <p className="text-xs text-slate-400 mt-1">Delay: {crawlState.crawlerStatus?.ml?.delay || 0}ms</p>
+              </div>
+              
+              <div className="bg-gradient-to-br from-slate-800 to-slate-800/50 p-4 rounded-xl border border-slate-700">
+                <div className="flex items-center justify-between mb-2">
+                  <span className="text-slate-400">Request Rate</span>
+                  <Activity size={20} className="text-blue-400" />
+                </div>
+                <p className="text-2xl font-bold text-white">{crawlState.crawlerStatus?.throttle?.requestRate || 0}/min</p>
+                <p className="text-xs text-slate-400 mt-1">Total: {crawlState.crawlerStatus?.requestsMade || 0}</p>
+              </div>
+              
+              <div className="bg-gradient-to-br from-slate-800 to-slate-800/50 p-4 rounded-xl border border-slate-700">
+                <div className="flex items-center justify-between mb-2">
+                  <span className="text-slate-400">Cooldown</span>
+                  {crawlState.cooldownRemaining > 0 ? <Coffee size={20} className="text-orange-400 animate-pulse" /> : <Battery size={20} className="text-green-400" />}
+                </div>
+                <p className="text-2xl font-bold text-white">
+                  {crawlState.cooldownRemaining > 0 ? `${Math.ceil(crawlState.cooldownRemaining / 60000)}m` : 'Ready'}
+                </p>
+                <p className="text-xs text-slate-400 mt-1">{crawlState.cooldownRemaining > 0 ? 'Rest mode' : 'Active'}</p>
+              </div>
+              
+              <div className="bg-gradient-to-br from-slate-800 to-slate-800/50 p-4 rounded-xl border border-slate-700">
+                <div className="flex items-center justify-between mb-2">
+                  <span className="text-slate-400">Findings</span>
+                  <AlertTriangle size={20} className="text-yellow-400" />
+                </div>
+                <p className="text-2xl font-bold text-white">{crawlState.findings.length}</p>
+                <p className="text-xs text-slate-400 mt-1">Pages: {crawlState.pagesCrawled}</p>
+              </div>
+            </div>
+
+            {/* Current Status Bar */}
+            {(crawlState.isRunning || crawlState.cooldownRemaining > 0) && (
+              <div className="bg-gradient-to-r from-slate-800 to-slate-800/50 p-4 rounded-xl border border-slate-700">
+                <div className="flex items-center justify-between mb-2">
+                  <div className="flex items-center gap-2">
+                    {crawlState.cooldownRemaining > 0 ? (
+                      <><Coffee size={18} className="text-orange-400" /><span className="text-orange-400 font-semibold">Cooldown Active</span></>
+                    ) : (
+                      <><Zap size={18} className="text-yellow-400" /><span className="text-yellow-400 font-semibold">Actively Crawling</span></>
+                    )}
+                  </div>
+                  <div className="text-xs text-slate-400 font-mono">{crawlState.currentStatus}</div>
+                </div>
+                
+                {crawlState.cooldownRemaining > 0 && (
+                  <div className="mt-2">
+                    <div className="bg-slate-700 rounded-full h-2 overflow-hidden">
+                      <div className="bg-gradient-to-r from-orange-500 to-red-500 h-2 transition-all duration-1000" style={{ width: `${(1 - crawlState.cooldownRemaining / EVASION_CONFIG.COOLDOWN.DURATION) * 100}%` }} />
+                    </div>
+                    <p className="text-xs text-slate-400 mt-1">Next crawl in {Math.floor(crawlState.cooldownRemaining / 60000)}m {Math.floor((crawlState.cooldownRemaining % 60000) / 1000)}s</p>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* Real-time Findings Feed */}
+            <div className="bg-slate-800/50 backdrop-blur-sm rounded-xl border border-slate-700">
+              <div className="p-4 border-b border-slate-700">
+                <h3 className="font-semibold text-white flex items-center gap-2">
+                  <Radio size={18} className="text-green-400 animate-pulse" />
+                  Real-time Intelligence Feed
+                </h3>
+              </div>
+              <div className="p-4 max-h-96 overflow-y-auto space-y-2">
+                {crawlState.findings.slice(0, 50).map((finding, idx) => (
+                  <div key={finding.id || idx} className="bg-slate-900 p-3 rounded-lg hover:bg-slate-900/80 transition">
+                    <div className="flex justify-between items-start">
+                      <div className="flex items-center gap-2">
+                        {finding.type === 'ip_address' && <Network size={14} className="text-blue-400" />}
+                        {finding.type === 'domain' && <Globe size={14} className="text-green-400" />}
+                        {finding.type === 'hash' && <Hash size={14} className="text-purple-400" />}
+                        {finding.type === 'cve' && <Bug size={14} className="text-red-400" />}
+                        <code className="text-sm text-blue-400">{finding.value}</code>
+                      </div>
+                      <span className="text-xs text-slate-500">{new Date(finding.timestamp).toLocaleTimeString()}</span>
+                    </div>
+                    <p className="text-xs text-slate-400 mt-1">Source: {finding.source}</p>
+                    <div className="flex gap-2 mt-2">
+                      <span className="text-xs bg-blue-500/20 text-blue-300 px-2 py-0.5 rounded">Confidence: {Math.round(finding.confidence)}%</span>
+                      {finding.verified && <span className="text-xs bg-green-500/20 text-green-300 px-2 py-0.5 rounded">Verified</span>}
+                    </div>
+                  </div>
+                ))}
+                {crawlState.findings.length === 0 && (
+                  <div className="text-center text-slate-500 py-8">
+                    <EyeOff size={32} className="mx-auto mb-2 opacity-50" />
+                    <p>No findings yet. Start a crawl to gather intelligence.</p>
+                  </div>
+                )}
+              </div>
+            </div>
+
+            {/* ML Insights & Evasion Stats */}
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+              <div className="bg-gradient-to-br from-purple-900/20 to-slate-800/50 rounded-xl border border-purple-800 p-4">
+                <h3 className="font-semibold text-white mb-3 flex items-center gap-2">
+                  <Brain size={18} className="text-purple-400" />
+                  ML Behavioral Insights
+                </h3>
+                <div className="space-y-2 text-sm">
+                  <div className="flex justify-between">
+                    <span className="text-slate-400">Learned Patterns</span>
+                    <span className="text-white">{crawlState.crawlerStatus?.ml?.learnedPatterns || 0}</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-slate-400">Blocks Avoided</span>
+                    <span className="text-white">{crawlState.crawlerStatus?.ml?.blocksAvoided || 0}</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-slate-400">Current User-Agent</span>
+                    <span className="text-white text-xs">{crawlState.crawlerStatus?.userAgent || 'Rotating'}</span>
+                  </div>
+                </div>
+              </div>
+              
+              <div className="bg-gradient-to-br from-green-900/20 to-slate-800/50 rounded-xl border border-green-800 p-4">
+                <h3 className="font-semibold text-white mb-3 flex items-center gap-2">
+                  <ShieldCheck size={18} className="text-green-400" />
+                  Evasion Techniques Active
+                </h3>
+                <div className="flex flex-wrap gap-2">
+                  <span className="text-xs bg-green-500/20 text-green-300 px-2 py-1 rounded">UA Rotation</span>
+                  <span className="text-xs bg-green-500/20 text-green-300 px-2 py-1 rounded">Fake Referrers</span>
+                  <span className="text-xs bg-green-500/20 text-green-300 px-2 py-1 rounded">Human Timing</span>
+                  <span className="text-xs bg-green-500/20 text-green-300 px-2 py-1 rounded">Session Persistence</span>
+                  <span className="text-xs bg-green-500/20 text-green-300 px-2 py-1 rounded">Rate Limit Bypass</span>
+                  <span className="text-xs bg-green-500/20 text-green-300 px-2 py-1 rounded">AJAX Mimicry</span>
+                  <span className="text-xs bg-orange-500/20 text-orange-300 px-2 py-1 rounded">30min Cooldown/6hr</span>
+                </div>
+                <p className="text-xs text-slate-400 mt-3">Cooldown every 6 hours for 30 minutes ensures undetectable crawling patterns</p>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Investigations View */}
+        {currentView === 'investigations' && (
+          <div className="space-y-6">
+            <div className="flex justify-between items-center">
+              <div>
+                <h2 className="text-3xl font-bold text-white">360° Investigations</h2>
+                <p className="text-slate-400 mt-1">Victim assistance & attack analysis</p>
+              </div>
+              <button onClick={createInvestigation} className="bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-700 hover:to-purple-700 px-4 py-2 rounded-lg flex items-center gap-2 transition-all">
+                <Plus size={18} /> New Investigation
+              </button>
+            </div>
+
+            <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+              {/* Investigations List */}
+              <div className="lg:col-span-1 space-y-3">
+                {investigations.map(inv => (
+                  <div key={inv.id} onClick={() => setActiveInvestigation(inv)} className={`bg-slate-800/50 backdrop-blur-sm p-4 rounded-xl border cursor-pointer transition-all hover:scale-105 ${activeInvestigation?.id === inv.id ? 'border-blue-500 shadow-lg shadow-blue-500/20' : 'border-slate-700'}`}>
+                    <div className="flex justify-between items-start mb-2">
+                      <p className="font-mono text-sm text-blue-400">{inv.caseId}</p>
+                      <span className={`text-xs px-2 py-1 rounded ${inv.severity === 'critical' ? 'bg-red-500/20 text-red-400' : 'bg-yellow-500/20 text-yellow-400'}`}>
+                        {inv.severity?.toUpperCase() || 'ACTIVE'}
+                      </span>
+                    </div>
+                    <p className="text-white font-semibold">{inv.victim?.name || 'Unknown Victim'}</p>
+                    <p className="text-xs text-slate-400 mt-1">Started: {new Date(inv.startDate).toLocaleDateString()}</p>
+                    <div className="flex gap-2 mt-3">
+                      <span className="text-xs bg-slate-700 px-2 py-0.5 rounded">{inv.findings?.length || 0} findings</span>
+                      <span className="text-xs bg-slate-700 px-2 py-0.5 rounded capitalize">{inv.status}</span>
+                    </div>
+                  </div>
+                ))}
+                {investigations.length === 0 && (
+                  <div className="bg-slate-800/50 rounded-xl p-8 text-center border border-slate-700">
+                    <Target size={32} className="mx-auto mb-2 text-slate-500" />
+                    <p className="text-slate-400">No investigations yet</p>
+                    <button onClick={createInvestigation} className="mt-3 text-blue-400 hover:text-blue-300">Create your first investigation →</button>
+                  </div>
+                )}
+              </div>
+
+              {/* Investigation Details */}
+              <div className="lg:col-span-2">
+                {activeInvestigation ? (
+                  <div className="bg-gradient-to-br from-slate-800/80 to-slate-800/50 rounded-xl border border-slate-700 p-6 backdrop-blur-sm">
+                    <div className="flex justify-between items-start mb-6">
+                      <div>
+                        <h3 className="text-2xl font-bold text-white">{activeInvestigation.caseId}</h3>
+                        <p className="text-slate-400">Victim: {activeInvestigation.victim?.name}</p>
+                      </div>
+                      <div className="flex gap-2">
+                        <button className="bg-blue-600/50 hover:bg-blue-600 px-3 py-1 rounded text-sm transition">Export Report</button>
+                        <button className="bg-green-600/50 hover:bg-green-600 px-3 py-1 rounded text-sm transition">Share IOCs</button>
+                      </div>
+                    </div>
+
+                    {/* Stats Overview */}
+                    <div className="grid grid-cols-3 gap-4 mb-6">
+                      <div className="bg-slate-900/50 p-3 rounded-lg text-center">
+                        <p className="text-2xl font-bold text-white">{activeInvestigation.findings?.length || 0}</p>
+                        <p className="text-xs text-slate-400">Total Findings</p>
+                      </div>
+                      <div className="bg-slate-900/50 p-3 rounded-lg text-center">
+                        <p className="text-2xl font-bold text-white">{activeInvestigation.findings?.filter(f => f.type === 'ip_address').length || 0}</p>
+                        <p className="text-xs text-slate-400">IP Addresses</p>
+                      </div>
+                      <div className="bg-slate-900/50 p-3 rounded-lg text-center">
+                        <p className="text-2xl font-bold text-white">{activeInvestigation.findings?.filter(f => f.type === 'domain').length || 0}</p>
+                        <p className="text-xs text-slate-400">Domains</p>
+                      </div>
+                    </div>
+
+                    {/* IOC List */}
+                    <div className="mb-6">
+                      <h4 className="text-white font-semibold mb-3 flex items-center gap-2">
+                        <FileSearch size={16} className="text-blue-400" />
+                        Extracted IOCs
+                      </h4>
+                      <div className="space-y-2 max-h-96 overflow-y-auto">
+                        {activeInvestigation.findings?.slice(0, 20).map((finding, idx) => (
+                          <div key={idx} className="bg-slate-900/50 p-2 rounded-lg">
+                            <div className="flex justify-between items-center">
+                              <code className="text-sm text-blue-400">{finding.value}</code>
+                              <span className="text-xs text-slate-500">{finding.type}</span>
+                            </div>
+                            <p className="text-xs text-slate-400 mt-1">Source: {finding.source}</p>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+
+                    {/* MITRE ATT&CK Mapping */}
+                    <div className="bg-purple-900/20 border border-purple-800 rounded-lg p-4">
+                      <h4 className="text-white font-semibold mb-2 flex items-center gap-2">
+                        <Target size={16} className="text-purple-400" />
+                        MITRE ATT&CK Mapping
+                      </h4>
+                      <div className="flex flex-wrap gap-2">
+                        <span className="text-xs bg-purple-500/20 text-purple-300 px-2 py-1 rounded">T1071 - C2</span>
+                        <span className="text-xs bg-purple-500/20 text-purple-300 px-2 py-1 rounded">T1568 - Dynamic Resolution</span>
+                        <span className="text-xs bg-purple-500/20 text-purple-300 px-2 py-1 rounded">T1583 - Infrastructure</span>
+                      </div>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="bg-slate-800/50 rounded-xl border border-slate-700 p-12 text-center">
+                    <Target size={48} className="text-slate-600 mx-auto mb-4" />
+                    <p className="text-slate-400">Select an investigation or create a new one</p>
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// Simple Plus icon component
+const Plus = ({ size, className }) => (
+  <svg className={className} width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+    <path d="M12 5v14M5 12h14" />
+  </svg>
+);
